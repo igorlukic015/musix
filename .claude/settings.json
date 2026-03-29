@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|MultiEdit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "dotnet build D:/Projects/musix/Musix/Musix.csproj 2>&1",
+            "timeout": 60,
+            "statusMessage": "Building solution..."
+          }
+        ]
+      }
+    ]
+  }
+}

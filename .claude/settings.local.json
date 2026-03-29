@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet build:*)",
+      "Bash(xargs grep:*)",
+      "Bash(find 'C:/Program Files/dotnet/sdk/10.0.201/Sdks' -maxdepth 2 -name *.props)",
+      "Bash(find 'C:/Program Files/dotnet' -name *.targets)",
+      "Bash(find 'C:/Program Files/dotnet' -name *.dll)",
+      "Bash(find C:/Users/Igor/.nuget -name *.dll)",
+      "Bash(dotnet package:*)"
+    ]
+  }
+}
