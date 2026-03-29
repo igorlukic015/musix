@@ -31,6 +31,8 @@ Bad grouping:
 
 For each group, stage only the relevant files or hunks and commit immediately before moving to the next group. Use `git add <specific files>` — do not use `git add .` or `git add -A`.
 
+You may freely run any git command that is read-only or additive: `git status`, `git diff`, `git log`, `git show`, `git add`, `git commit`, `git stash list`, etc. Do **not** run commands that discard or rewrite working-tree or history state: `git reset`, `git checkout -- <file>`, `git restore`, `git clean`, `git stash drop/pop/clear`, `git rebase`, `git push --force`, or any variant with `--hard` / `--force`.
+
 Commit message format:
 - First line: imperative mood, max 72 chars, no period — describes *what* the commit does
 - If the reason is non-obvious, add a blank line then a short body explaining *why*
