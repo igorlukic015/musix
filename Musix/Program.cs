@@ -1,50 +1,33 @@
-using NAudio.CoreAudioApi;
-using NAudio.CoreAudioApi.Interfaces;
-using System.Diagnostics;
+using Musix.Audio;
+using NAudio.Wave;
 
-MMDeviceEnumerator enumerator = new();
-MMDevice device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-Console.WriteLine($"Default audio endpoint: {device.FriendlyName}");
-Console.WriteLine();
+IReadOnlyList<AudioSession> sessions = AudioSessionEnumerator.GetActiveSessions();
 
-SessionCollection sessions = device.AudioSessionManager.Sessions;
-List<(int Pid, string Name)> activeSessions = [];
-
-for (int i = 0; i < sessions.Count; i++)
-{
-    AudioSessionControl session = sessions[i];
-
-    if (session.GetProcessID == 0 || session.State != AudioSessionState.AudioSessionStateActive)
-    {
-        continue;
-    }
-
-    int pid = (int)session.GetProcessID;
-    string processName = Process.GetProcessById(pid).ProcessName;
-    activeSessions.Add((pid, processName));
-    Console.WriteLine($"  [{activeSessions.Count - 1}] {processName} (PID {pid})");
-}
-
-if (activeSessions.Count == 0)
+if (sessions.Count == 0)
 {
     Console.WriteLine("No active audio sessions found. Play some audio and try again.");
     return;
+}
+
+for (int i = 0; i < sessions.Count; i++)
+{
+    Console.WriteLine($"  [{i}] {sessions[i].ProcessName} (PID {sessions[i].ProcessId})");
 }
 
 Console.Write("\nEnter index to capture (or press Enter for 0): ");
 string? input = Console.ReadLine();
 int selectedIndex = int.TryParse(input, out int parsed) ? parsed : 0;
 
-(int targetPid, string targetName) = activeSessions[selectedIndex];
-Console.WriteLine($"\nActivating process loopback for: {targetName} (PID {targetPid})");
+AudioSession target = sessions[selectedIndex];
+Console.WriteLine($"\nActivating process loopback for: {target.ProcessName} (PID {target.ProcessId})");
 
-using Musix.ProcessLoopbackCapture capture = new();
-await capture.InitializeAsync(targetPid);
+using ProcessLoopbackCapture capture = new();
+await capture.InitializeAsync(target.ProcessId);
 
 Console.WriteLine($"Format: {capture.WaveFormat}");
 
 int totalBytes = 0;
-capture.DataAvailable += (object? _, NAudio.Wave.WaveInEventArgs e) =>
+capture.DataAvailable += (object? _, WaveInEventArgs e) =>
 {
     totalBytes += e.BytesRecorded;
     Console.Write($"\rCaptured: {totalBytes / 1024} KB  ");

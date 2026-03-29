@@ -1,7 +1,8 @@
-using System.Runtime.InteropServices;
+using Musix.Audio.Interop;
 using NAudio.Wave;
+using System.Runtime.InteropServices;
 
-namespace Musix;
+namespace Musix.Audio;
 
 internal sealed class ProcessLoopbackCapture : IDisposable
 {
@@ -20,20 +21,23 @@ internal sealed class ProcessLoopbackCapture : IDisposable
     {
         _audioClient = await ActivateProcessLoopbackAsync((uint)processId);
 
-        int hr = _audioClient.GetMixFormat(out IntPtr mixFormatPtr);
-        Marshal.ThrowExceptionForHR(hr);
+        // Process loopback virtual clients do not implement GetMixFormat (returns E_NOTIMPL).
+        // Fetch the mix format from the default render endpoint instead.
+        _waveFormat = GetDefaultRenderMixFormat();
 
+        _eventHandle = CreateEventW(IntPtr.Zero, false, false, null);
+        if (_eventHandle == IntPtr.Zero)
+        {
+            throw new InvalidOperationException("Failed to create audio event handle.");
+        }
+
+        int formatSize = Marshal.SizeOf(_waveFormat);
+        IntPtr mixFormatPtr = Marshal.AllocHGlobal(formatSize);
         try
         {
-            _waveFormat = WaveFormat.MarshalFromPtr(mixFormatPtr);
+            Marshal.StructureToPtr(_waveFormat, mixFormatPtr, false);
 
-            _eventHandle = CreateEventW(IntPtr.Zero, false, false, null);
-            if (_eventHandle == IntPtr.Zero)
-            {
-                throw new InvalidOperationException("Failed to create audio event handle.");
-            }
-
-            hr = _audioClient.Initialize(
+            int hr = _audioClient.Initialize(
                 AudioClientShareMode.Shared,
                 AudioClientStreamFlags.Loopback | AudioClientStreamFlags.EventCallback,
                 2_000_000L,
@@ -44,15 +48,15 @@ internal sealed class ProcessLoopbackCapture : IDisposable
         }
         finally
         {
-            Marshal.FreeCoTaskMem(mixFormatPtr);
+            Marshal.FreeHGlobal(mixFormatPtr);
         }
 
-        hr = _audioClient.SetEventHandle(_eventHandle);
-        Marshal.ThrowExceptionForHR(hr);
+        int setEventHr = _audioClient.SetEventHandle(_eventHandle);
+        Marshal.ThrowExceptionForHR(setEventHr);
 
         Guid captureClientIid = new("C8ADBD64-E71E-48a0-A4DE-185C395CD317");
-        hr = _audioClient.GetService(ref captureClientIid, out IntPtr captureClientPtr);
-        Marshal.ThrowExceptionForHR(hr);
+        int getServiceHr = _audioClient.GetService(ref captureClientIid, out IntPtr captureClientPtr);
+        Marshal.ThrowExceptionForHR(getServiceHr);
 
         _captureClient = (IAudioCaptureClient)Marshal.GetObjectForIUnknown(captureClientPtr);
         Marshal.Release(captureClientPtr);
@@ -128,6 +132,15 @@ internal sealed class ProcessLoopbackCapture : IDisposable
         }
     }
 
+    private static WaveFormat GetDefaultRenderMixFormat()
+    {
+        NAudio.CoreAudioApi.MMDeviceEnumerator enumerator = new();
+        NAudio.CoreAudioApi.MMDevice device = enumerator.GetDefaultAudioEndpoint(
+            NAudio.CoreAudioApi.DataFlow.Render,
+            NAudio.CoreAudioApi.Role.Multimedia);
+        return device.AudioClient.MixFormat;
+    }
+
     private static async Task<IAudioClient> ActivateProcessLoopbackAsync(uint processId)
     {
         AudioClientActivationParams activationParams = new()
@@ -200,7 +213,7 @@ internal sealed class ProcessLoopbackCapture : IDisposable
         ref Guid riid,
         ref PropVariantBlob activationParams,
         IActivateAudioInterfaceCompletionHandler completionHandler,
-        out IActivateAudioInterfaceAsyncOperation? activationOperation);
+        out IntPtr activationOperation);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
     private static extern IntPtr CreateEventW(
@@ -214,135 +227,47 @@ internal sealed class ProcessLoopbackCapture : IDisposable
 
     [DllImport("kernel32.dll")]
     private static extern bool CloseHandle(IntPtr hObject);
-}
 
-// ── WASAPI interop types ──────────────────────────────────────────────────────
-
-internal enum AudioClientShareMode
-{
-    Shared = 0,
-    Exclusive = 1,
-}
-
-[Flags]
-internal enum AudioClientStreamFlags : uint
-{
-    Loopback = 0x00020000,
-    EventCallback = 0x00040000,
-}
-
-internal enum AudioClientActivationType
-{
-    Default = 0,
-    ProcessLoopback = 1,
-}
-
-internal enum ProcessLoopbackMode
-{
-    IncludeTargetProcessTree = 0,
-    ExcludeTargetProcessTree = 1,
-}
-
-[StructLayout(LayoutKind.Sequential)]
-internal struct AudioClientProcessLoopbackParams
-{
-    public uint TargetProcessId;
-    public ProcessLoopbackMode ProcessLoopbackMode;
-}
-
-[StructLayout(LayoutKind.Sequential)]
-internal struct AudioClientActivationParams
-{
-    public AudioClientActivationType ActivationType;
-    public AudioClientProcessLoopbackParams ProcessLoopbackParams;
-}
-
-// PROPVARIANT for VT_BLOB (0x41): header (8 bytes) + cbSize (4) + pad (4) + pBlobData (8).
-[StructLayout(LayoutKind.Explicit, Size = 24)]
-internal struct PropVariantBlob
-{
-    [FieldOffset(0)]  public ushort Vt;
-    [FieldOffset(2)]  public ushort WReserved1;
-    [FieldOffset(4)]  public ushort WReserved2;
-    [FieldOffset(6)]  public ushort WReserved3;
-    [FieldOffset(8)]  public uint   CbSize;
-    [FieldOffset(16)] public IntPtr PBlobData;
-}
-
-[ComImport]
-[Guid("1CB9AD4C-DBFA-4c32-B178-C2F568A703B2")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface IAudioClient
-{
-    [PreserveSig] int Initialize(AudioClientShareMode shareMode, AudioClientStreamFlags streamFlags, long hnsBufferDuration, long hnsPeriodicity, IntPtr pFormat, IntPtr audioSessionGuid);
-    [PreserveSig] int GetBufferSize(out uint pNumBufferFrames);
-    [PreserveSig] int GetStreamLatency(out long phnsLatency);
-    [PreserveSig] int GetCurrentPadding(out uint pNumPaddingFrames);
-    [PreserveSig] int IsFormatSupported(AudioClientShareMode shareMode, IntPtr pFormat, out IntPtr ppClosestMatch);
-    [PreserveSig] int GetMixFormat(out IntPtr ppDeviceFormat);
-    [PreserveSig] int GetDevicePeriod(out long phnsDefaultDevicePeriod, out long phnsMinimumDevicePeriod);
-    [PreserveSig] int Start();
-    [PreserveSig] int Stop();
-    [PreserveSig] int Reset();
-    [PreserveSig] int SetEventHandle(IntPtr eventHandle);
-    [PreserveSig] int GetService(ref Guid riid, out IntPtr ppv);
-}
-
-[ComImport]
-[Guid("C8ADBD64-E71E-48a0-A4DE-185C395CD317")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface IAudioCaptureClient
-{
-    [PreserveSig] int GetBuffer(out IntPtr ppData, out uint pNumFramesAvailable, out uint pdwFlags, out ulong pu64DevicePosition, out ulong pu64QPCPosition);
-    [PreserveSig] int ReleaseBuffer(uint numFramesRead);
-    [PreserveSig] int GetNextPacketSize(out uint pNumFramesInNextPacket);
-}
-
-[ComImport]
-[Guid("72A567CE-257E-4B10-BB6A-E44DCA2D1531")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface IActivateAudioInterfaceAsyncOperation
-{
-    [PreserveSig] int GetActivateResult(out int activateResult, out IntPtr activatedInterface);
-}
-
-[Guid("41D949AB-9862-444A-80F6-C261334DA5EB")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface IActivateAudioInterfaceCompletionHandler
-{
-    [PreserveSig] int ActivateCompleted(IActivateAudioInterfaceAsyncOperation activateOperation);
-}
-
-[ClassInterface(ClassInterfaceType.None)]
-internal sealed class CompletionHandler : IActivateAudioInterfaceCompletionHandler
-{
-    private readonly TaskCompletionSource<IAudioClient> _tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public Task<IAudioClient> GetResultAsync() => _tcs.Task;
-
-    public int ActivateCompleted(IActivateAudioInterfaceAsyncOperation activateOperation)
+    [ClassInterface(ClassInterfaceType.None)]
+    private sealed class CompletionHandler : IActivateAudioInterfaceCompletionHandler
     {
-        int hr = activateOperation.GetActivateResult(out int activateResult, out IntPtr interfacePtr);
+        private readonly TaskCompletionSource<IAudioClient> _tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        if (hr != 0)
+        public Task<IAudioClient> GetResultAsync() => _tcs.Task;
+
+        public int ActivateCompleted(IntPtr activateOperationPtr)
         {
-            _tcs.TrySetException(
-                Marshal.GetExceptionForHR(hr)
-                ?? new InvalidOperationException($"GetActivateResult failed: 0x{hr:X8}"));
+            // Call GetActivateResult via vtable to avoid CLR COM marshaling.
+            // IActivateAudioInterfaceAsyncOperation vtable: [0]=QI [1]=AddRef [2]=Release [3]=GetActivateResult
+            IntPtr vtable = Marshal.ReadIntPtr(activateOperationPtr);
+            IntPtr fnPtr = Marshal.ReadIntPtr(vtable, 3 * IntPtr.Size);
+            GetActivateResultDelegate getActivateResult = Marshal.GetDelegateForFunctionPointer<GetActivateResultDelegate>(fnPtr);
+
+            int hr = getActivateResult(activateOperationPtr, out int activateResult, out IntPtr interfacePtr);
+
+            if (hr != 0)
+            {
+                _tcs.TrySetException(
+                    Marshal.GetExceptionForHR(hr)
+                    ?? new InvalidOperationException($"GetActivateResult failed: 0x{hr:X8}"));
+                return 0;
+            }
+
+            if (activateResult != 0)
+            {
+                _tcs.TrySetException(
+                    Marshal.GetExceptionForHR(activateResult)
+                    ?? new InvalidOperationException($"Audio activation failed: 0x{activateResult:X8}"));
+                return 0;
+            }
+
+            IAudioClient audioClient = (IAudioClient)Marshal.GetObjectForIUnknown(interfacePtr);
+            Marshal.Release(interfacePtr);
+            _tcs.TrySetResult(audioClient);
             return 0;
         }
 
-        if (activateResult != 0)
-        {
-            _tcs.TrySetException(
-                Marshal.GetExceptionForHR(activateResult)
-                ?? new InvalidOperationException($"Audio activation failed: 0x{activateResult:X8}"));
-            return 0;
-        }
-
-        IAudioClient audioClient = (IAudioClient)Marshal.GetObjectForIUnknown(interfacePtr);
-        Marshal.Release(interfacePtr);
-        _tcs.TrySetResult(audioClient);
-        return 0;
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+        private delegate int GetActivateResultDelegate(IntPtr thisPtr, out int activateResult, out IntPtr activatedInterface);
     }
 }
