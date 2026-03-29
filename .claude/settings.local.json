@@ -7,7 +7,8 @@
       "Bash(find 'C:/Program Files/dotnet' -name *.targets)",
       "Bash(find 'C:/Program Files/dotnet' -name *.dll)",
       "Bash(find C:/Users/Igor/.nuget -name *.dll)",
-      "Bash(dotnet package:*)"
+      "Bash(dotnet package:*)",
+      "Bash(find ~/.nuget/packages -name *.dll)"
     ]
   }
 }
