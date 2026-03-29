@@ -13,7 +13,13 @@
       "Bash(1:*)",
       "Bash(dotnet test:*)",
       "Bash(xxd)",
-      "Bash(xxd D:/Projects/musix/Musix/Audio/AudioSession.cs)"
+      "Bash(xxd D:/Projects/musix/Musix/Audio/AudioSession.cs)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }
