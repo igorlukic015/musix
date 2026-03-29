@@ -2,7 +2,7 @@ Commit all current changes as a series of small, logical commits. Each commit mu
 
 ## Step 1 — Understand the full diff
 
-Run these together to get the complete picture:
+Run each of these as a separate Bash call. Do not prefix with `cd` — run git commands directly from the working directory:
 ```
 git status
 git diff
@@ -29,7 +29,7 @@ Bad grouping:
 
 ## Step 3 — Commit each group
 
-For each group, stage only the relevant files or hunks and commit immediately before moving to the next group. Use `git add <specific files>` — do not use `git add .` or `git add -A`.
+For each group, stage only the relevant files or hunks and commit immediately before moving to the next group. Use `git add <specific files>` — do not use `git add .` or `git add -A`. Never prefix git commands with `cd`.
 
 You may freely run any git command that is read-only or additive: `git status`, `git diff`, `git log`, `git show`, `git add`, `git commit`, `git stash list`, etc. Do **not** run commands that discard or rewrite working-tree or history state: `git reset`, `git checkout -- <file>`, `git restore`, `git clean`, `git stash drop/pop/clear`, `git rebase`, `git push --force`, or any variant with `--hard` / `--force`.
 
@@ -56,4 +56,4 @@ changes
 
 ## Step 4 — Verify
 
-After all commits, run `git log --oneline -20` and read the result. The sequence of messages should read as a coherent narrative of the work done. If any message is vague or two commits could be merged without losing meaning, that is a signal the grouping needs adjustment — but do not amend already-created commits; note it for the user instead.
+After all commits, run `git log --oneline -20` as a separate Bash call and read the result. The sequence of messages should read as a coherent narrative of the work done. If any message is vague or two commits could be merged without losing meaning, that is a signal the grouping needs adjustment — but do not amend already-created commits; note it for the user instead.
