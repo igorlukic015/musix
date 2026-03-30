@@ -1,5 +1,5 @@
 using Musix.Audio;
-using NAudio.Wave;
+using System.Runtime.InteropServices;
 
 IReadOnlyList<AudioSession> sessions = AudioSessionEnumerator.GetActiveSessions();
 
@@ -26,11 +26,24 @@ await capture.InitializeAsync(target.ProcessId);
 
 Console.WriteLine($"Format: {capture.WaveFormat}");
 
-int totalBytes = 0;
-capture.DataAvailable += (object? _, WaveInEventArgs e) =>
+using FrameOutputNode frameOutput = new(capture);
+
+frameOutput.QuantumProcessed += (object? _, EventArgs _) =>
 {
-    totalBytes += e.BytesRecorded;
-    Console.Write($"\rCaptured: {totalBytes / 1024} KB  ");
+    if (!frameOutput.TryRead(out AudioFrame frame) || frame.Duration <= TimeSpan.Zero)
+        return;
+
+    // WASAPI shared-mode loopback always delivers 32-bit IEEE 754 float samples.
+    // Cast the raw byte span to float — zero-copy reinterpretation, no allocation.
+    ReadOnlySpan<float> samples = MemoryMarshal.Cast<byte, float>(frame.Data);
+
+    // Show the first 8 samples (4 stereo pairs) on a single updating line.
+    int count = Math.Min(samples.Length, 8);
+    Console.Write($"\r[{samples.Length,5} samples] ");
+    for (int i = 0; i < count; i++)
+    {
+        Console.Write($"{samples[i]:+0.0000;-0.0000} ");
+    }
 };
 
 capture.StartCapture();
@@ -38,4 +51,4 @@ Console.WriteLine("Capturing... Press Enter to stop.");
 Console.ReadLine();
 capture.StopCapture();
 
-Console.WriteLine($"\nDone. Total captured: {totalBytes / 1024} KB");
+Console.WriteLine("\nDone.");
