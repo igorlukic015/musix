@@ -1,4 +1,7 @@
+using Concentus;
+using Concentus.Enums;
 using Musix.Audio;
+using NAudio.Wave.SampleProviders;
 using System.Runtime.InteropServices;
 
 IReadOnlyList<AudioSession> sessions = AudioSessionEnumerator.GetActiveSessions();
@@ -24,25 +27,47 @@ Console.WriteLine($"\nActivating process loopback for: {target.ProcessName} (PID
 using ProcessLoopbackCapture capture = new();
 await capture.InitializeAsync(target.ProcessId);
 
-Console.WriteLine($"Format: {capture.WaveFormat}");
+int channels = capture.WaveFormat.Channels;
+Console.WriteLine($"Source format: {capture.WaveFormat.SampleRate} Hz, {channels} ch");
 
 using FrameOutputNode frameOutput = new(capture);
 
+// Stage 1 — resample device rate → 48 kHz.
+FrameSampleProvider frameProvider = new(capture.WaveFormat.SampleRate, channels);
+WdlResamplingSampleProvider resampler = new(frameProvider, 48000);
+float[] resampledBuffer = new float[960 * channels];
+
+// Stage 2 — accumulate resampled quanta until we have a full Opus frame.
+const int opusFrameSize = 960; // samples per channel
+SampleAccumulator accumulator = new(opusFrameSize, channels);
+float[] opusFrame = new float[opusFrameSize * channels];
+
+// Stage 3 — Opus encoder.
+IOpusEncoder encoder = OpusCodecFactory.CreateEncoder(48000, channels, OpusApplication.OPUS_APPLICATION_AUDIO, null!);
+encoder.Bitrate = 128000;
+byte[] packetBuffer = new byte[4000];
+
 frameOutput.QuantumProcessed += (object? _, EventArgs _) =>
 {
-    if (!frameOutput.TryRead(out AudioFrame frame) || frame.Duration <= TimeSpan.Zero)
-        return;
-
-    // WASAPI shared-mode loopback always delivers 32-bit IEEE 754 float samples.
-    // Cast the raw byte span to float — zero-copy reinterpretation, no allocation.
-    ReadOnlySpan<float> samples = MemoryMarshal.Cast<byte, float>(frame.Data);
-
-    // Show the first 8 samples (4 stereo pairs) on a single updating line.
-    int count = Math.Min(samples.Length, 8);
-    Console.Write($"\r[{samples.Length,5} samples] ");
-    for (int i = 0; i < count; i++)
+    if (frameOutput.TryRead(out AudioFrame frame))
     {
-        Console.Write($"{samples[i]:+0.0000;-0.0000} ");
+        frameProvider.Push(MemoryMarshal.Cast<byte, float>(frame.Data));
+    }
+
+    int samplesRead = resampler.Read(resampledBuffer, 0, resampledBuffer.Length);
+    if (samplesRead > 0)
+    {
+        accumulator.Push(resampledBuffer.AsSpan(0, samplesRead));
+    }
+
+    while (accumulator.TryDequeue(opusFrame))
+    {
+        int encodedBytes = encoder.Encode(
+            opusFrame.AsSpan(),
+            opusFrameSize,
+            packetBuffer.AsSpan(),
+            packetBuffer.Length);
+        Console.Write($"\r[{encodedBytes,4} bytes] ");
     }
 };
 
