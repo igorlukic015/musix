@@ -1,4 +1,6 @@
 <Solution>
   <Project Path="Musix/Musix.csproj" />
   <Project Path="Musix.Tests/Musix.Tests.csproj" />
+  <Project Path="Musix.Host/Musix.Host.csproj" />
+  <Project Path="Musix.Listener/Musix.Listener.csproj" />
 </Solution>
