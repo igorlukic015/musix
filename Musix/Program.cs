@@ -1,6 +1,7 @@
 using Concentus;
 using Concentus.Enums;
 using Musix.Audio;
+using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 using System.Runtime.InteropServices;
 
@@ -42,10 +43,25 @@ const int opusFrameSize = 960; // samples per channel
 SampleAccumulator accumulator = new(opusFrameSize, channels);
 float[] opusFrame = new float[opusFrameSize * channels];
 
-// Stage 3 — Opus encoder.
+// Stage 3 — Opus encoder + local monitor decoder.
 IOpusEncoder encoder = OpusCodecFactory.CreateEncoder(48000, channels, OpusApplication.OPUS_APPLICATION_AUDIO, null!);
 encoder.Bitrate = 128000;
 byte[] packetBuffer = new byte[4000];
+
+IOpusDecoder decoder = OpusCodecFactory.CreateDecoder(48000, channels, null!);
+float[] decodedFrame = new float[opusFrameSize * channels];
+
+// Stage 4 — playback via WasapiOut.
+WaveFormat playbackFormat = WaveFormat.CreateIeeeFloatWaveFormat(48000, channels);
+BufferedWaveProvider playbackBuffer = new(playbackFormat)
+{
+    BufferDuration = TimeSpan.FromMilliseconds(200),
+    DiscardOnBufferOverflow = true,
+};
+
+using WasapiOut player = new();
+player.Init(playbackBuffer);
+player.Play();
 
 frameOutput.QuantumProcessed += (object? _, EventArgs _) =>
 {
@@ -67,7 +83,16 @@ frameOutput.QuantumProcessed += (object? _, EventArgs _) =>
             opusFrameSize,
             packetBuffer.AsSpan(),
             packetBuffer.Length);
-        Console.Write($"\r[{encodedBytes,4} bytes] ");
+
+        int decodedSamples = decoder.Decode(
+            packetBuffer.AsSpan(0, encodedBytes),
+            decodedFrame.AsSpan(),
+            opusFrameSize);
+
+        ReadOnlySpan<byte> pcmBytes = MemoryMarshal.Cast<float, byte>(decodedFrame.AsSpan(0, decodedSamples * channels));
+        playbackBuffer.AddSamples(pcmBytes.ToArray(), 0, pcmBytes.Length);
+
+        Console.Write($"\r[{encodedBytes,4} B → {decodedSamples * channels,5} floats] ");
     }
 };
 
@@ -75,5 +100,6 @@ capture.StartCapture();
 Console.WriteLine("Capturing... Press Enter to stop.");
 Console.ReadLine();
 capture.StopCapture();
+player.Stop();
 
 Console.WriteLine("\nDone.");
