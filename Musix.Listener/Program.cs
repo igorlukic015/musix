@@ -1,29 +1,24 @@
+using System.Buffers.Binary;
 using System.Net.Sockets;
 
 Console.WriteLine("Connecting to localhost:5000...");
 
 using TcpClient client = new();
 await client.ConnectAsync("127.0.0.1", 5000);
-Console.WriteLine("Connected.");
+Console.WriteLine("Connected.\n");
 
-using StreamReader reader = new(client.GetStream());
+NetworkStream stream = client.GetStream();
+byte[] lengthBuffer = new byte[4];
 
-using CancellationTokenSource cts = new();
-Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
-
-try
+for (int i = 0; i < 10; i++)
 {
-    while (!cts.IsCancellationRequested)
-    {
-        string? line = await reader.ReadLineAsync(cts.Token);
-        if (line is null)
-        {
-            Console.WriteLine("Connection closed by host.");
-            break;
-        }
-        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {line}");
-    }
-}
-catch (OperationCanceledException) { }
+    await stream.ReadExactlyAsync(lengthBuffer);
+    int expected = BinaryPrimitives.ReadInt32BigEndian(lengthBuffer);
 
-Console.WriteLine("Done.");
+    byte[] payload = new byte[expected];
+    await stream.ReadExactlyAsync(payload);
+
+    Console.WriteLine($"  Received message {i + 1,2}: {payload.Length,5} bytes (expected {expected,5}) — {(payload.Length == expected ? "OK" : "MISMATCH")}");
+}
+
+Console.WriteLine("\nDone.");
