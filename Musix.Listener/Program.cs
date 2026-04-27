@@ -8,10 +8,13 @@ const int sampleRate = 48000;
 const int channels = 2;
 const int opusFrameSize = 960;
 
-Console.WriteLine("Connecting to localhost:5000...");
+string host = args.Length > 0 ? args[0] : "127.0.0.1";
+int port = args.Length > 1 && int.TryParse(args[1], out int p) ? p : 5000;
+
+Console.WriteLine($"Connecting to {host}:{port}...");
 
 using TcpClient client = new();
-await client.ConnectAsync("127.0.0.1", 5000);
+await client.ConnectAsync(host, port);
 Console.WriteLine("Connected. Receiving packets...\n");
 
 NetworkStream stream = client.GetStream();
