@@ -4,6 +4,9 @@ using NAudio.Wave;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 
+[DllImport("winmm.dll")] static extern int timeBeginPeriod(int uPeriod);
+timeBeginPeriod(1);
+
 const int sampleRate = 48000;
 const int channels = 2;
 const int opusFrameSize = 960;
@@ -26,8 +29,8 @@ float[] decodedFrame = new float[opusFrameSize * channels];
 WaveFormat playbackFormat = WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channels);
 BufferedWaveProvider playbackBuffer = new(playbackFormat)
 {
-    BufferDuration = TimeSpan.FromMilliseconds(200),
-    DiscardOnBufferOverflow = true,
+    BufferDuration = TimeSpan.FromMilliseconds(500),
+    DiscardOnBufferOverflow = false,
 };
 
 using WasapiOut player = new();
@@ -41,6 +44,13 @@ Task consumerTask = Task.Run(async () =>
     while (!cts.Token.IsCancellationRequested)
     {
         AudioPacket? packet = jitterBuffer.TryDequeue();
+
+        if (packet is null && playbackBuffer.BufferedDuration > TimeSpan.FromMilliseconds(100))
+        {
+            try { await Task.Delay(5, cts.Token); }
+            catch (OperationCanceledException) { break; }
+            continue;
+        }
 
         int decodedSamples;
         if (packet is not null)
