@@ -18,6 +18,7 @@ Console.WriteLine($"Connecting to {host}:{port}...");
 
 using TcpClient client = new();
 await client.ConnectAsync(host, port);
+client.NoDelay = true;
 Console.WriteLine("Connected. Receiving packets...\n");
 
 NetworkStream stream = client.GetStream();
@@ -25,6 +26,7 @@ JitterBuffer jitterBuffer = new();
 
 IOpusDecoder decoder = OpusCodecFactory.CreateDecoder(sampleRate, channels, null!);
 float[] decodedFrame = new float[opusFrameSize * channels];
+byte[] pcmByteBuffer = new byte[opusFrameSize * channels * sizeof(float)];
 
 WaveFormat playbackFormat = WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channels);
 BufferedWaveProvider playbackBuffer = new(playbackFormat)
@@ -39,18 +41,20 @@ player.Play();
 
 using CancellationTokenSource cts = new();
 
+const TimeSpan targetBuffer = TimeSpan.FromMilliseconds(150);
+
 Task consumerTask = Task.Run(async () =>
 {
     while (!cts.Token.IsCancellationRequested)
     {
-        AudioPacket? packet = jitterBuffer.TryDequeue();
-
-        if (packet is null && playbackBuffer.BufferedDuration > TimeSpan.FromMilliseconds(100))
+        if (playbackBuffer.BufferedDuration >= targetBuffer)
         {
-            try { await Task.Delay(5, cts.Token); }
+            try { await Task.Delay(10, cts.Token); }
             catch (OperationCanceledException) { break; }
             continue;
         }
+
+        AudioPacket? packet = jitterBuffer.TryDequeue();
 
         int decodedSamples;
         if (packet is not null)
@@ -69,12 +73,9 @@ Task consumerTask = Task.Run(async () =>
                 opusFrameSize);
         }
 
-        ReadOnlySpan<byte> pcmBytes = MemoryMarshal.Cast<float, byte>(
-            decodedFrame.AsSpan(0, decodedSamples * channels));
-        playbackBuffer.AddSamples(pcmBytes.ToArray(), 0, pcmBytes.Length);
-
-        try { await Task.Delay(20, cts.Token); }
-        catch (OperationCanceledException) { break; }
+        MemoryMarshal.Cast<float, byte>(decodedFrame.AsSpan(0, decodedSamples * channels))
+            .CopyTo(pcmByteBuffer.AsSpan());
+        playbackBuffer.AddSamples(pcmByteBuffer, 0, decodedSamples * channels * sizeof(float));
     }
 });
 
