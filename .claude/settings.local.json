@@ -24,7 +24,8 @@
       "Bash(dotnet add *)",
       "Bash(dotnet restore *)",
       "Bash(dotnet list *)",
-      "Bash(dotnet new console *)"
+      "Bash(dotnet new console *)",
+      "Bash(dotnet new classlib *)"
     ]
   }
 }
