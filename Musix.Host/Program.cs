@@ -1,29 +1,86 @@
-using System.Buffers.Binary;
-using System.Net;
-using System.Net.Sockets;
+using Concentus;
+using Concentus.Enums;
+using Musix.Audio;
+using Musix.Host;
+using NAudio.Wave;
+using NAudio.Wave.SampleProviders;
+using System.Runtime.InteropServices;
 
-TcpListener listener = new(IPAddress.Loopback, 5000);
-listener.Start();
-Console.WriteLine("Listening on port 5000, waiting for a connection...");
+const int port = 5000;
+using CancellationTokenSource cts = new();
+using AudioBroadcaster broadcaster = new(port);
+broadcaster.Start(cts.Token);
+Console.WriteLine($"Listening for listeners on port {port}");
 
-using TcpClient client = await listener.AcceptTcpClientAsync();
-Console.WriteLine($"Client connected: {client.Client.RemoteEndPoint}\n");
+IReadOnlyList<AudioSession> sessions = AudioSessionEnumerator.GetActiveSessions();
 
-NetworkStream stream = client.GetStream();
-Random rng = new();
-byte[] lengthPrefix = new byte[4];
-
-for (int i = 0; i < 10; i++)
+if (sessions.Count == 0)
 {
-    int size = rng.Next(100, 4001);
-    byte[] payload = new byte[size];
-    rng.NextBytes(payload);
-
-    BinaryPrimitives.WriteInt32BigEndian(lengthPrefix, size);
-    await stream.WriteAsync(lengthPrefix);
-    await stream.WriteAsync(payload);
-
-    Console.WriteLine($"  Sent message {i + 1,2}: {size,5} bytes");
+    Console.WriteLine("No active audio sessions found. Play some audio and try again.");
+    return;
 }
+
+for (int i = 0; i < sessions.Count; i++)
+{
+    Console.WriteLine($"  [{i}] {sessions[i].ProcessName} (PID {sessions[i].ProcessId})");
+}
+
+Console.Write("\nEnter index to capture (or press Enter for 0): ");
+string? input = Console.ReadLine();
+int selectedIndex = int.TryParse(input, out int parsed) ? parsed : 0;
+
+AudioSession target = sessions[selectedIndex];
+Console.WriteLine($"\nActivating process loopback for: {target.ProcessName} (PID {target.ProcessId})");
+
+using ProcessLoopbackCapture capture = new();
+await capture.InitializeAsync(target.ProcessId);
+
+int channels = capture.WaveFormat.Channels;
+Console.WriteLine($"Source format: {capture.WaveFormat.SampleRate} Hz, {channels} ch");
+
+using FrameOutputNode frameOutput = new(capture);
+
+FrameSampleProvider frameProvider = new(capture.WaveFormat.SampleRate, channels);
+WdlResamplingSampleProvider resampler = new(frameProvider, 48000);
+float[] resampledBuffer = new float[960 * channels];
+
+const int opusFrameSize = 960;
+SampleAccumulator accumulator = new(opusFrameSize, channels);
+float[] opusFrame = new float[opusFrameSize * channels];
+
+IOpusEncoder encoder = OpusCodecFactory.CreateEncoder(48000, channels, OpusApplication.OPUS_APPLICATION_AUDIO, null!);
+encoder.Bitrate = 128000;
+byte[] packetBuffer = new byte[4000];
+
+frameOutput.QuantumProcessed += (object? _, EventArgs _) =>
+{
+    if (frameOutput.TryRead(out AudioFrame frame))
+    {
+        frameProvider.Push(MemoryMarshal.Cast<byte, float>(frame.Data));
+    }
+
+    int samplesRead = resampler.Read(resampledBuffer, 0, resampledBuffer.Length);
+    if (samplesRead > 0)
+    {
+        accumulator.Push(resampledBuffer.AsSpan(0, samplesRead));
+    }
+
+    while (accumulator.TryDequeue(opusFrame))
+    {
+        int encodedBytes = encoder.Encode(
+            opusFrame.AsSpan(),
+            opusFrameSize,
+            packetBuffer.AsSpan(),
+            packetBuffer.Length);
+
+        broadcaster.SendFrame(packetBuffer[..encodedBytes]);
+    }
+};
+
+capture.StartCapture();
+Console.WriteLine("Capturing... Press Enter to stop.");
+Console.ReadLine();
+capture.StopCapture();
+cts.Cancel();
 
 Console.WriteLine("\nDone.");
