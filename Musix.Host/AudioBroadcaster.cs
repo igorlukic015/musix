@@ -67,6 +67,7 @@ public sealed class AudioBroadcaster : IDisposable
             while (!cancellationToken.IsCancellationRequested)
             {
                 TcpClient client = await _listener.AcceptTcpClientAsync(cancellationToken);
+                client.NoDelay = true;
                 NetworkStream stream = client.GetStream();
 
                 lock (_clientsLock)
