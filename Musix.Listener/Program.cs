@@ -41,7 +41,7 @@ player.Play();
 
 using CancellationTokenSource cts = new();
 
-const TimeSpan targetBuffer = TimeSpan.FromMilliseconds(150);
+TimeSpan targetBuffer = TimeSpan.FromMilliseconds(150);
 
 Task consumerTask = Task.Run(async () =>
 {
