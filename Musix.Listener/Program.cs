@@ -1,24 +1,88 @@
-using System.Buffers.Binary;
+using Concentus;
+using Musix.Network;
+using NAudio.Wave;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
+
+const int sampleRate = 48000;
+const int channels = 2;
+const int opusFrameSize = 960;
 
 Console.WriteLine("Connecting to localhost:5000...");
 
 using TcpClient client = new();
 await client.ConnectAsync("127.0.0.1", 5000);
-Console.WriteLine("Connected.\n");
+Console.WriteLine("Connected. Receiving packets...\n");
 
 NetworkStream stream = client.GetStream();
-byte[] lengthBuffer = new byte[4];
+JitterBuffer jitterBuffer = new();
 
-for (int i = 0; i < 10; i++)
+IOpusDecoder decoder = OpusCodecFactory.CreateDecoder(sampleRate, channels, null!);
+float[] decodedFrame = new float[opusFrameSize * channels];
+
+WaveFormat playbackFormat = WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channels);
+BufferedWaveProvider playbackBuffer = new(playbackFormat)
 {
-    await stream.ReadExactlyAsync(lengthBuffer);
-    int expected = BinaryPrimitives.ReadInt32BigEndian(lengthBuffer);
+    BufferDuration = TimeSpan.FromMilliseconds(200),
+    DiscardOnBufferOverflow = true,
+};
 
-    byte[] payload = new byte[expected];
-    await stream.ReadExactlyAsync(payload);
+using WasapiOut player = new();
+player.Init(playbackBuffer);
+player.Play();
 
-    Console.WriteLine($"  Received message {i + 1,2}: {payload.Length,5} bytes (expected {expected,5}) — {(payload.Length == expected ? "OK" : "MISMATCH")}");
+using CancellationTokenSource cts = new();
+
+Task consumerTask = Task.Run(async () =>
+{
+    while (!cts.Token.IsCancellationRequested)
+    {
+        AudioPacket? packet = jitterBuffer.TryDequeue();
+
+        int decodedSamples;
+        if (packet is not null)
+        {
+            decodedSamples = decoder.Decode(
+                packet.Payload.AsSpan(),
+                decodedFrame.AsSpan(),
+                opusFrameSize);
+            Console.WriteLine($"seq={packet.SequenceNumber} size={packet.Payload.Length}B");
+        }
+        else
+        {
+            decodedSamples = decoder.Decode(
+                ReadOnlySpan<byte>.Empty,
+                decodedFrame.AsSpan(),
+                opusFrameSize);
+        }
+
+        ReadOnlySpan<byte> pcmBytes = MemoryMarshal.Cast<float, byte>(
+            decodedFrame.AsSpan(0, decodedSamples * channels));
+        playbackBuffer.AddSamples(pcmBytes.ToArray(), 0, pcmBytes.Length);
+
+        try { await Task.Delay(20, cts.Token); }
+        catch (OperationCanceledException) { break; }
+    }
+});
+
+try
+{
+    while (true)
+    {
+        AudioPacket packet = await PacketReader.ReadAsync(stream);
+        jitterBuffer.Add(packet);
+    }
+}
+catch (EndOfStreamException)
+{
+    Console.WriteLine("\nHost closed connection.");
+}
+catch (IOException)
+{
+    Console.WriteLine("\nConnection lost.");
 }
 
-Console.WriteLine("\nDone.");
+cts.Cancel();
+await consumerTask;
+player.Stop();
+Console.WriteLine("Done.");
